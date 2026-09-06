@@ -33,6 +33,7 @@
   .share-row .btn{background:rgba(255,255,255,0.08);color:var(--paper);border-color:rgba(255,255,255,0.3);}
   .share-row .btn:hover{background:rgba(255,255,255,0.16);}
   .sync-status{font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8FE3B0;opacity:0;transition:opacity .3s ease;}
+  .share-note{font-size:11.5px;color:#9AB3B8;margin:8px 0 0;max-width:60ch;line-height:1.6;}
 
   main{max-width:1040px;margin:0 auto;padding:0 6vw 100px;}
   .sheet{
@@ -233,7 +234,7 @@
   }
   @media print{
     .no-print{display:none !important;}
-    #aiFab, #aiPanel, .video-modal-overlay{display:none !important;}
+    #aiFab, #aiPanel{display:none !important;}
     body{background:#fff;}
     .board{background:#fff;border-bottom:none;}
     h1, .tagline{color:#000;}
@@ -299,11 +300,12 @@
     <div class="role-chip">TEACHER DASHBOARD</div>
   </div>
   <div class="share-row no-print">
-    <button class="btn small" id="shareBtn">🔗 Copy link chia sẻ cho học sinh</button>
+    <button class="btn small" id="shareBtn">💾 Lưu dữ liệu mới nhất</button>
     <button class="btn small ghost" id="exportBtn">📄 Xuất báo cáo (in / lưu PDF)</button>
     <button class="btn small ghost" id="themeToggleBtn">🌗 Đổi nền sáng/tối</button>
     <span class="sync-status" id="syncStatus"></span>
   </div>
+  <p class="share-note no-print">⚠️ Để học sinh xem được đúng dữ liệu này, hãy dùng nút <b>Share</b> của Claude.ai (phía trên cuộc trò chuyện, ngoài khung này) để lấy link công khai — nút "Lưu dữ liệu" ở trên chỉ đảm bảo dữ liệu mới nhất đã sẵn sàng, không tự tạo link.</p>
 </div>
 
 <main>
@@ -433,32 +435,8 @@
     </div>
   </section>
 
-  <div class="sheet" style="margin-top:26px;">
-    <section>
-      <div class="section-head"><span class="section-num">11</span><h2>Video học tập</h2></div>
-      <div class="video-toolbar no-print">
-        <input type="text" id="videoUrlInput" placeholder="Dán link YouTube bài giảng, VD: https://www.youtube.com/watch?v=...">
-        <button class="btn primary small" id="addVideoBtn">+ Thêm video</button>
-      </div>
-      <div id="videoGrid" class="video-grid"></div>
-    </section>
-  </div>
-
   <footer>EDU-AI Dashboard — dự án STEM · dữ liệu Excel/Word được xử lý trực tiếp trên trình duyệt.</footer>
 </main>
-
-<div class="video-modal-overlay" id="videoModalOverlay">
-  <div class="video-modal" id="videoModalBox">
-    <div class="frame-wrap" id="videoFrameWrap"></div>
-    <div class="video-modal-bar">
-      <span class="title" id="videoModalTitle"></span>
-      <div class="modal-btns">
-        <button class="icon-btn" id="fullscreenBtn" title="Toàn màn hình">⛶</button>
-        <button class="icon-btn" id="closeModalBtn" title="Đóng">✕</button>
-      </div>
-    </div>
-  </div>
-</div>
 
 <button id="aiFab" class="no-print" title="Hỏi trợ lý AI">✨</button>
 <div id="aiPanel" class="no-print">
@@ -490,12 +468,6 @@ let parsedRows = null;
 let dataset = null;
 let testHistory = [];
 let geminiApiKey = '';
-let videos = [
-  { type:'search', title:'Ôn tập Toán 12', channel:'Gợi ý video · Lớp 12', query:'ôn tập toán 12 THPT', color:'#2D6A8F' },
-  { type:'search', title:'Ôn tập Vật lý 11', channel:'Gợi ý video · Lớp 11', query:'bài giảng vật lý 11', color:'#3F8F5F' },
-  { type:'search', title:'Ôn tập Hóa học 10', channel:'Gợi ý video · Lớp 10', query:'bài giảng hóa học 10', color:'#D3502F' },
-  { type:'search', title:'Ôn tập Sinh học THPT', channel:'Gợi ý video · Tổng hợp', query:'bài giảng sinh học THPT', color:'#B4821F' },
-];
 
 const fileInput = document.getElementById('fileInput');
 const fileNameEl = document.getElementById('fileName');
@@ -1128,42 +1100,57 @@ function localAnswer(q){
   return `Tổng quan lớp: hạng mục thấp nhất là "${weakest.name}" (${weakest.pct}%), cao nhất là "${strongest.name}" (${strongest.pct}%). Cô/thầy có thể hỏi cụ thể hơn, VD "học sinh nào yếu ${weakest.name} nhất".`;
 }
 
-/* Model Gemini đổi tên/khai tử rất nhanh, nên thử lần lượt vài model cho tới khi có model hoạt động */
-const GEMINI_MODEL_CANDIDATES = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
+/* Model Gemini đổi tên/khai tử rất nhanh. Ưu tiên alias tự cập nhật, kèm vài model dự phòng còn hoạt động */
+const GEMINI_MODEL_CANDIDATES = ['gemini-flash-latest', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite'];
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function callGeminiModel(model, promptText){
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 15000);
+  try{
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey },
+      signal: ctrl.signal,
+      body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
+    });
+    clearTimeout(timeout);
+    if (!res.ok){
+      let detail = `HTTP ${res.status}`;
+      try{
+        const errData = await res.json();
+        if (errData && errData.error && errData.error.message) detail += ` — ${errData.error.message}`;
+      }catch(parseErr){ /* thân phản hồi không phải JSON, bỏ qua */ }
+      return { ok:false, status:res.status, detail };
+    }
+    const data = await res.json();
+    const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+    const text = parts ? parts.map(p => p.text || '').join('\n').trim() : '';
+    return text ? { ok:true, text } : { ok:false, status:200, detail:'phản hồi rỗng' };
+  }catch(err){
+    clearTimeout(timeout);
+    return { ok:false, status:null, detail:(err && err.name === 'AbortError') ? 'quá thời gian chờ' : 'lỗi kết nối (mạng hoặc trình duyệt chặn request)' };
+  }
+}
 
 async function geminiCall(promptText){
   if (!geminiApiKey) return { text:null, error:'Chưa nhập Gemini API key.' };
-  let lastError = 'không rõ lỗi';
+  const attempts = [];
   for (const model of GEMINI_MODEL_CANDIDATES){
-    const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 15000);
-    try{
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey },
-        signal: ctrl.signal,
-        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
-      });
-      clearTimeout(timeout);
-      if (!res.ok){
-        if (res.status === 400 || res.status === 403) {
-          lastError = `Key bị từ chối (HTTP ${res.status}) — kiểm tra lại key hoặc quyền truy cập ở Google AI Studio.`;
-          break; // lỗi key thì thử model khác cũng vô ích
-        }
-        lastError = `Model "${model}" trả về lỗi HTTP ${res.status} (có thể model đã đổi tên/ngừng hỗ trợ).`;
-        continue; // thử model kế tiếp
+    let result;
+    const maxRetries = 2; // 503/429 là lỗi tạm thời (server quá tải), thử lại vài lần trước khi bỏ cuộc
+    for (let attempt = 0; attempt <= maxRetries; attempt++){
+      result = await callGeminiModel(model, promptText);
+      if (result.ok) return { text: result.text, error:null, model };
+      if (result.status === 503 || result.status === 429){
+        if (attempt < maxRetries){ await sleep(900 * (attempt+1)); continue; }
       }
-      const data = await res.json();
-      const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
-      const text = parts ? parts.map(p => p.text || '').join('\n').trim() : '';
-      if (text) return { text, error:null, model };
-      lastError = `Model "${model}" phản hồi rỗng.`;
-    }catch(err){
-      clearTimeout(timeout);
-      lastError = (err && err.name === 'AbortError') ? `Model "${model}" quá thời gian chờ (mạng chậm hoặc bị chặn).` : `Lỗi kết nối tới Gemini (có thể do mạng hoặc trình duyệt chặn request).`;
+      break; // lỗi khác (404, 400, 403...) thì không cần thử lại model này nữa
     }
+    attempts.push(`${model}: ${result.detail}`);
+    if (result.status === 400 || result.status === 403) break; // lỗi key/quyền thì thử model khác cũng vô ích
   }
-  return { text:null, error:lastError };
+  return { text:null, error: attempts.join('  |  ') };
 }
 
 async function askGemini(question){
@@ -1199,78 +1186,6 @@ document.getElementById('genExerciseBtn').addEventListener('click', async () => 
     : `<p class="ai-note">Không tạo được đề lúc này. Chi tiết: ${escapeHtml(result.error||'')}</p>`;
 });
 
-/* ==================== VIDEO SECTION ==================== */
-const videoGrid = document.getElementById('videoGrid');
-const videoUrlInput = document.getElementById('videoUrlInput');
-document.getElementById('addVideoBtn').addEventListener('click', addVideoFromInput);
-videoUrlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addVideoFromInput(); });
-
-function extractYouTubeId(url){
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=)([\w-]{11})/, /(?:youtu\.be\/)([\w-]{11})/,
-    /(?:youtube\.com\/embed\/)([\w-]{11})/, /(?:youtube\.com\/shorts\/)([\w-]{11})/,
-  ];
-  for (const re of patterns){ const m = url.match(re); if (m) return m[1]; }
-  return null;
-}
-async function addVideoFromInput(){
-  const url = videoUrlInput.value.trim();
-  if (!url) return;
-  const id = extractYouTubeId(url);
-  if (!id){ alert('Không nhận ra link YouTube này. Hãy dán link dạng youtube.com/watch?v=... hoặc youtu.be/...'); return; }
-  videoUrlInput.value = '';
-  const item = { type:'link', id, title: 'Đang tải thông tin video...', channel: '', thumbnail: `https://img.youtube.com/vi/${id}/hqdefault.jpg` };
-  videos.unshift(item);
-  renderVideos();
-  try{
-    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent('https://www.youtube.com/watch?v='+id)}&format=json`);
-    if (res.ok){
-      const meta = await res.json();
-      item.title = meta.title || 'Video bài giảng';
-      item.channel = meta.author_name || '';
-      if (meta.thumbnail_url) item.thumbnail = meta.thumbnail_url;
-    } else { item.title = 'Video bài giảng'; }
-  }catch(err){ item.title = 'Video bài giảng'; }
-  renderVideos();
-  saveStateToCloud();
-}
-function renderVideos(){
-  videoGrid.innerHTML = '';
-  if (!videos.length){ videoGrid.innerHTML = `<div class="video-empty" style="grid-column:1/-1;">Chưa có video nào. Dán link YouTube bài giảng ở ô trên rồi bấm "+ Thêm video".</div>`; return; }
-  videos.forEach(v => {
-    const card = document.createElement('div');
-    card.className = 'video-card';
-    const thumbHtml = v.type === 'search'
-      ? `<div class="video-thumb-wrap" style="background:linear-gradient(135deg, ${v.color}, #17343A);"><div class="play-badge"></div></div>`
-      : `<div class="video-thumb-wrap"><img src="${v.thumbnail}" alt="${escapeHtml(v.title)}"><div class="play-badge"></div></div>`;
-    card.innerHTML = `${thumbHtml}<div class="video-info"><p class="video-title">${escapeHtml(v.title)}</p><div class="video-channel">${escapeHtml(v.channel||'')}</div></div>`;
-    card.addEventListener('click', () => openVideoModal(v));
-    videoGrid.appendChild(card);
-  });
-}
-renderVideos();
-
-const videoModalOverlay = document.getElementById('videoModalOverlay');
-const videoFrameWrap = document.getElementById('videoFrameWrap');
-const videoModalTitle = document.getElementById('videoModalTitle');
-function openVideoModal(v){
-  const src = v.type === 'search'
-    ? `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(v.query)}&autoplay=1`
-    : `https://www.youtube.com/embed/${v.id}?autoplay=1&rel=0`;
-  videoFrameWrap.innerHTML = `<iframe src="${src}" title="${escapeHtml(v.title)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>`;
-  videoModalTitle.textContent = v.title;
-  videoModalOverlay.classList.add('open');
-}
-function closeVideoModal(){ videoModalOverlay.classList.remove('open'); videoFrameWrap.innerHTML = ''; }
-document.getElementById('closeModalBtn').addEventListener('click', closeVideoModal);
-videoModalOverlay.addEventListener('click', (e) => { if (e.target === videoModalOverlay) closeVideoModal(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeVideoModal(); });
-document.getElementById('fullscreenBtn').addEventListener('click', () => {
-  const box = document.getElementById('videoModalBox');
-  if (box.requestFullscreen) box.requestFullscreen();
-  else if (box.webkitRequestFullscreen) box.webkitRequestFullscreen();
-});
-
 /* ==================== SAVE / SHARE / EXPORT ==================== */
 document.getElementById('exportBtn').addEventListener('click', () => window.print());
 
@@ -1289,9 +1204,9 @@ function showSyncBadge(text){
 async function saveStateToCloud(){
   if (typeof window.storage === 'undefined') return;
   try{
-    const payload = JSON.stringify({ dataset, videos, testHistory, maxScore: Number(maxScoreInput.value)||10, savedAt: Date.now() });
+    const payload = JSON.stringify({ dataset, testHistory, maxScore: Number(maxScoreInput.value)||10, savedAt: Date.now() });
     await window.storage.set('edu-ai-state', payload, true);
-    showSyncBadge('Đã lưu — link chia sẻ sẽ hiện đúng dữ liệu này ✓');
+    showSyncBadge('Đã lưu dữ liệu mới nhất ✓');
   }catch(err){ /* best-effort */ }
 }
 async function loadStateFromCloud(){
@@ -1302,8 +1217,6 @@ async function loadStateFromCloud(){
   if (!res || !res.value) return;
   try{
     const payload = JSON.parse(res.value);
-    if (payload.videos && payload.videos.length) videos = payload.videos;
-    renderVideos();
     if (payload.testHistory) testHistory = payload.testHistory;
     if (payload.dataset){
       dataset = payload.dataset;
@@ -1316,9 +1229,8 @@ async function loadStateFromCloud(){
   }catch(err){ /* dữ liệu lưu bị lỗi, bỏ qua */ }
 }
 document.getElementById('shareBtn').addEventListener('click', async () => {
-  try{ await navigator.clipboard.writeText(window.location.href); }catch(e){}
   await saveStateToCloud();
-  showSyncBadge('Đã copy link & đồng bộ dữ liệu mới nhất cho học sinh ✓');
+  showSyncBadge('Đã lưu dữ liệu mới nhất ✓ — nhớ lấy link qua nút Share của Claude.ai để gửi học sinh');
 });
 
 loadStateFromCloud();
